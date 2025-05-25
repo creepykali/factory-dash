@@ -1,0 +1,48 @@
+<div class="search-bar">
+  <input
+    type="text"
+    placeholder="Search..."
+    (input)="onSearchChange($event)"
+  />
+</div>
+
+<div *ngIf="isLoading()" class="loading">Loading machines...</div>
+
+<div *ngIf="error() as err" class="error">
+  <p>❌ {{ err }}</p>
+</div>
+
+<div *ngIf="!isLoading() && machines().length === 0 && !error()">
+  <p>No machines found.</p>
+</div>
+
+<table *ngIf="machines().length > 0">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr *ngFor="let machine of machines(); trackBy: trackByMachine">
+      <td><a (click)="goToDetail(machine.id)">{{ machine.name }}</a></td>
+      <td>{{ machine.status }}</td>
+      <td>
+        <button (click)="goToDetail(machine.id)">Edit</button>
+        <button (click)="delete(machine.id)">Delete</button>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<div *ngIf="totalCount > pageSize" class="pagination">
+  <button (click)="onPageChange(page - 1)" [disabled]="page === 1">Prev</button>
+  <span>Page {{ page }}</span>
+  <button
+    (click)="onPageChange(page + 1)"
+    [disabled]="page * pageSize >= totalCount"
+  >
+    Next
+  </button>
+</div>
