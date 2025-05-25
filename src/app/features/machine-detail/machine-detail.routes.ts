@@ -5,5 +5,8 @@ export const MACHINE_DETAIL_ROUTES: Routes = [
   {
     path: '',
     component: MachineDetailComponent,
+    data: {
+      renderMode: 'no-prerender'
+    }
   },
 ];

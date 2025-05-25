@@ -1,172 +1,104 @@
-import { Injectable, Signal, computed, effect, signal } from '@angular/core';
-import { finalize, catchError, of, tap } from 'rxjs';
+import { Injectable, computed, signal } from '@angular/core';
+import { Machine } from '../../shared/models/machine.model';
 import { MachineApiService } from '../services/machine-api.service';
-import type { Machine } from '../../shared/models/machine.model';
-
-interface MachineListParams {
-  page: number;
-  pageSize: number;
-  search: string;
-}
+import { HubConnection, HubConnectionBuilder } from '@microsoft/signalr';
+import { catchError, finalize, of, tap } from 'rxjs';
 
 @Injectable({ providedIn: 'root' })
-export class MachineStore {
-  // ─── Private signals ──────────────────────────────
-  private readonly _machines = signal<Machine[]>([]);
-  private readonly _selectedMachine = signal<Machine | null>(null);
-  private readonly _isLoading = signal(false);
-  private readonly _error = signal<string | null>(null);
-  private readonly _totalCount = signal(0);
+export class MachineStoreService {
+  private _machines = signal<Machine[]>([]);
+  private _selectedMachine = signal<Machine | null>(null);
+  private _isLoading = signal(false);
+  private _error = signal<string | null>(null);
+  private _totalCount = signal(0);
+  private _params = signal({ page: 1, pageSize: 10, search: '' });
 
-  private readonly _listParams = signal<MachineListParams>({
-    page: 1,
-    pageSize: 10,
-    search: '',
-  });
+  private hubConnection: HubConnection | null = null;
 
-  // ─── Public readonly signals ───────────────────────
-  readonly machines = this._machines.asReadonly();
-  readonly selectedMachine = this._selectedMachine.asReadonly();
-  readonly isLoading = this._isLoading.asReadonly();
-  readonly error = this._error.asReadonly();
-  readonly totalCount = this._totalCount.asReadonly();
-  readonly listParams = this._listParams.asReadonly();
+  machines = this._machines.asReadonly();
+  selectedMachine = this._selectedMachine.asReadonly();
+  isLoading = this._isLoading.asReadonly();
+  error = this._error.asReadonly();
+  listParams = this._params.asReadonly();
+  totalCount = this._totalCount.asReadonly();
 
-  // ─── Computed selectors ────────────────────────────
-  readonly filteredMachines = computed(() => {
-    const list = this._machines();
-    const { search } = this._listParams();
+  filteredMachines = computed(() => {
+    const machines = this._machines();
+    const search = this._params().search.toLowerCase();
     return search
-      ? list.filter(m =>
-          m.name.toLowerCase().includes(search.toLowerCase())
-        )
-      : list;
+      ? machines.filter(m => m.name.toLowerCase().includes(search))
+      : machines;
   });
 
-  readonly totalPages = computed(() => {
-    const total = this._totalCount();
-    const size = this._listParams().pageSize;
-    return Math.ceil(total / size);
-  });
-
-  readonly hasErrors = computed(() => {
-    return this._machines().some(m => m.status === 'Error');
-  });
-
-  // ─── Constructor ───────────────────────────────────
   constructor(private api: MachineApiService) {
-    // Auto-refresh list when params change
-    effect(() => {
-      const params = this._listParams();
-      this.loadMachineList(params);
-    });
+    this.loadMachineList();
   }
 
-  // ─── Load all machines with optional override params ─
-  loadMachineList(params?: Partial<MachineListParams>) {
-    const mergedParams = { ...this._listParams(), ...params };
-    this._listParams.set(mergedParams);
+  loadMachineList() {
+    const { page, pageSize, search } = this._params();
     this._isLoading.set(true);
-    this._error.set(null);
-
-    this.api
-      .fetchMachines(mergedParams)
+    this.api.fetchMachines({ page, pageSize, search })
       .pipe(
-        tap((machines: Machine[]) => {
-          this._machines.set(machines);
-          // TODO: Set total count if available from API
-        }),
+        tap(data => this._machines.set(data)),
         catchError(err => {
-          this._error.set(`Failed to load machines: ${err.message}`);
+          this._error.set(err.message);
           return of([]);
         }),
         finalize(() => this._isLoading.set(false))
-      )
-      .subscribe();
+      ).subscribe();
   }
 
-  // ─── Load a specific machine ───────────────────────
   loadMachineById(id: string) {
     this._isLoading.set(true);
-    this._error.set(null);
-
-    this.api
-      .fetchMachineById(id)
+    this.api.fetchMachineById(id)
       .pipe(
-        tap(machine => this._selectedMachine.set(machine)),
+        tap(m => this._selectedMachine.set(m)),
         catchError(err => {
-          this._error.set(`Failed to load machine: ${err.message}`);
+          this._error.set(err.message);
           return of(null);
         }),
         finalize(() => this._isLoading.set(false))
-      )
-      .subscribe();
+      ).subscribe();
   }
 
-  // ─── Create or update a machine ────────────────────
-  saveMachine(data: Partial<Machine>, id?: string) {
-    this._isLoading.set(true);
-    this._error.set(null);
+  connectWebSocket(machineId: string) {
+    this.hubConnection = new HubConnectionBuilder()
+      .withUrl('http://ng-demo-api.opten.io/hubs/machines')
+      .withAutomaticReconnect()
+      .build();
 
-    const request$ = id
-      ? this.api.updateMachine(id, data)
-      : this.api.createMachine(data);
+    this.hubConnection.on('ReceiveUpdate', (update: Machine) => {
+      if (update.id === machineId) {
+        this._selectedMachine.set(update);
+      }
+    });
 
-    request$
-      .pipe(
-        tap((saved: Machine) => {
-          const current = this._machines();
-          if (id) {
-            this._machines.set(current.map(m => (m.id === saved.id ? saved : m)));
-          } else {
-            this._machines.set([saved, ...current]);
-          }
-        }),
-        catchError(err => {
-          this._error.set(`Save failed: ${err.message}`);
-          return of(null);
-        }),
-        finalize(() => this._isLoading.set(false))
-      )
-      .subscribe();
+    this.hubConnection.start().catch(console.error);
   }
 
-  // ─── Delete a machine ──────────────────────────────
+  disconnectWebSocket() {
+    this.hubConnection?.stop();
+    this.hubConnection = null;
+  }
+
   deleteMachine(id: string) {
-    this._isLoading.set(true);
-    this._error.set(null);
-
-    this.api
-      .deleteMachine(id)
-      .pipe(
-        tap(() => {
-          const updated = this._machines().filter(m => m.id !== id);
-          this._machines.set(updated);
-        }),
-        catchError(err => {
-          this._error.set(`Delete failed: ${err.message}`);
-          return of(null);
-        }),
-        finalize(() => this._isLoading.set(false))
-      )
-      .subscribe();
+    this.api.deleteMachine(id).subscribe(() => {
+      this._machines.set(this._machines().filter(m => m.id !== id));
+    });
   }
 
-  // ─── Clear selected machine (on component destroy) ─
+  setSearch(search: string) {
+    this._params.update(p => ({ ...p, search }));
+    this.loadMachineList();
+  }
+
+  setPage(page: number) {
+    this._params.update(p => ({ ...p, page }));
+    this.loadMachineList();
+  }
+
   clearSelectedMachine() {
     this._selectedMachine.set(null);
   }
 
-  // ─── List param helpers ────────────────────────────
-  setSearch(search: string) {
-    this._listParams.update(p => ({ ...p, search }));
-  }
-
-  setPage(page: number) {
-    this._listParams.update(p => ({ ...p, page }));
-  }
-
-  setPageSize(pageSize: number) {
-    this._listParams.update(p => ({ ...p, pageSize }));
-  }
 }

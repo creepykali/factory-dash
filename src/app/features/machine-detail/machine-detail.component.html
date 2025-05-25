@@ -1,1 +1,26 @@
-<h2>Machine Detail</h2>
+<div *ngIf="isLoading()">
+  <p>Loading machine details...</p>
+</div>
+
+<div *ngIf="error() as err" class="error">
+  <p>❌ {{ err }}</p>
+</div>
+
+<ng-container *ngIf="machine() as m">
+  <h2>{{ m.name }} <small>({{ m.status }})</small></h2>
+
+  <div>
+    <p><strong>Performance:</strong> {{ m.metrics?.performance ?? '—' }}%</p>
+    <p><strong>Produced Parts:</strong> {{ m.metrics?.producedParts ?? '—' }}</p>
+
+    <div *ngIf="m.errors?.length">
+      <p><strong>Active Errors:</strong></p>
+      <ul>
+        <li *ngFor="let err of m.errors">{{ err }}</li>
+      </ul>
+    </div>
+  </div>
+
+  <button (click)="goBack()">⬅ Back</button>
+</ng-container>
+

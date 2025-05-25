@@ -14,3 +14,5 @@ export const appConfig = {
     provideHttpClient(withFetch(), withInterceptors([httpErrorInterceptor])),
   ]
 };
+
+
